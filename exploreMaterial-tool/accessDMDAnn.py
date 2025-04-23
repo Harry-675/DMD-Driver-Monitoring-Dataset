@@ -177,11 +177,16 @@ class exportClass():
                                 "WARNING: Annotation argument must be string or int")
                         if validAnnotation:
                             print("\n\n-- Getting data of %s channel --" % (channel))
-                            # 为每个intervalChunk值调用getIntervals
-                            for chunk in self.intervalChunk:
-                                current_chunk = chunk
-                                print(f"\n-- Using chunk size: {current_chunk} --")
-                                intervals = self.getIntervals(mat, channel, stream, annotation, current_chunk)
+                            # 图像导出不考虑chunk
+                            if mat == "image" or mat == "images" or mat == "img" or mat == "imgs":
+                                print("\n-- 图像导出不使用chunk --")
+                                intervals = self.getIntervals(mat, channel, stream, annotation, None)
+                            else:
+                                # 视频导出才考虑不同的chunk值
+                                for chunk in self.intervalChunk:
+                                    current_chunk = chunk
+                                    print(f"\n-- Using chunk size: {current_chunk} --")
+                                    intervals = self.getIntervals(mat, channel, stream, annotation, current_chunk)
                         else:
                             print("WARNING: annotation %s is not in this OpenLABEL." % str(annotation))
 
@@ -212,8 +217,10 @@ class exportClass():
             fullIntervals = self.vcd_handler.get_frames_intervals_of_action(annotation)
         # make lists from dictionaries
         fullIntervalsAsList = self.dictToList(fullIntervals)
-        # if intervals must be cutted, cut
-        if current_chunk is not None and current_chunk > 1:
+        
+        # 只有视频导出且chunk>1时才进行切片
+        isVideo = not (material == "image" or material == "images" or material == "img" or material == "imgs")
+        if isVideo and current_chunk is not None and current_chunk > 1:
             fullIntervalsAsList = self.cutIntervals(fullIntervalsAsList, current_chunk)
 
         if self.write:
@@ -225,13 +232,15 @@ class exportClass():
             if self.datasetDMD:
                 # create folder per annotation and per session
                 dirName = Path(self.destinationPath +"/dmd_"+channel+ "/"+self.info[2] + "/" + str(annotation))
-                # 如果使用多个切片长度，添加切片长度到目录名
-                if current_chunk is not None and current_chunk > 1:
+                # 只有视频导出才添加chunk到目录名
+                isVideo = not (material == "image" or material == "images" or material == "img" or material == "imgs")
+                if isVideo and current_chunk is not None and current_chunk > 1:
                     dirName = Path(str(dirName) + f"/chunk_{current_chunk}")
             else:
                 dirName = Path(self.destinationPath+ "/" +str(annotation))
-                # 如果使用多个切片长度，添加切片长度到目录名
-                if current_chunk is not None and current_chunk > 1:
+                # 只有视频导出才添加chunk到目录名
+                isVideo = not (material == "image" or material == "images" or material == "img" or material == "imgs")
+                if isVideo and current_chunk is not None and current_chunk > 1:
                     dirName = Path(str(dirName) + f"/chunk_{current_chunk}")
             if not dirName.exists():
                 os.makedirs(str(dirName), exist_ok=True)
