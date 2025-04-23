@@ -133,8 +133,11 @@ class exportClass():
             self.size = (224,224)
         if "intervalChunk" in config_dict:
             self.intervalChunk = config_dict["intervalChunk"]
+            # 确保intervalChunk可以是列表或单个值
+            if not isinstance(self.intervalChunk, list):
+                self.intervalChunk = [self.intervalChunk]
         else:
-            self.intervalChunk = 0
+            self.intervalChunk = [0]
         if "ignoreSmall" in config_dict:
             self.ignoreSmall = config_dict["ignoreSmall"]
         else:
@@ -174,12 +177,16 @@ class exportClass():
                                 "WARNING: Annotation argument must be string or int")
                         if validAnnotation:
                             print("\n\n-- Getting data of %s channel --" % (channel))
-                            intervals = self.getIntervals(mat, channel, stream, annotation)
+                            # 为每个intervalChunk值调用getIntervals
+                            for chunk in self.intervalChunk:
+                                current_chunk = chunk
+                                print(f"\n-- Using chunk size: {current_chunk} --")
+                                intervals = self.getIntervals(mat, channel, stream, annotation, current_chunk)
                         else:
                             print("WARNING: annotation %s is not in this OpenLABEL." % str(annotation))
 
     # Function to get intervals of @annotation from OpenLABEL and if @write, exports the @material of @stream indicated to @self.destinationPath
-    def getIntervals(self, material, channel, stream, annotation):
+    def getIntervals(self, material, channel, stream, annotation, current_chunk=None):
         #get name of action if uid is fiven
         if isinstance(annotation, int):
             annotation = self.actionList[annotation]
@@ -206,8 +213,8 @@ class exportClass():
         # make lists from dictionaries
         fullIntervalsAsList = self.dictToList(fullIntervals)
         # if intervals must be cutted, cut
-        if self.intervalChunk > 1:
-            fullIntervalsAsList = self.cutIntervals(fullIntervalsAsList)
+        if current_chunk is not None and current_chunk > 1:
+            fullIntervalsAsList = self.cutIntervals(fullIntervalsAsList, current_chunk)
 
         if self.write:
             print("Writing...")
@@ -218,8 +225,14 @@ class exportClass():
             if self.datasetDMD:
                 # create folder per annotation and per session
                 dirName = Path(self.destinationPath +"/dmd_"+channel+ "/"+self.info[2] + "/" + str(annotation))
+                # 如果使用多个切片长度，添加切片长度到目录名
+                if current_chunk is not None and current_chunk > 1:
+                    dirName = Path(str(dirName) + f"/chunk_{current_chunk}")
             else:
                 dirName = Path(self.destinationPath+ "/" +str(annotation))
+                # 如果使用多个切片长度，添加切片长度到目录名
+                if current_chunk is not None and current_chunk > 1:
+                    dirName = Path(str(dirName) + f"/chunk_{current_chunk}")
             if not dirName.exists():
                 os.makedirs(str(dirName), exist_ok=True)
                 print("Directory", dirName.name, "created")
@@ -271,9 +284,9 @@ class exportClass():
     # @intervalChunk: chunks size
     # @ignoreSmall: True to ignore intervals that cannot be cutted because they are smaller than @intervalChunk
     # @asc: flag to start cutting from start of interval (ascendant) or from the end of interval (descendant)
-    def cutIntervals(self, intervals):
+    def cutIntervals(self, intervals, current_chunk):
         assert (len(intervals) > 0)
-        assert (self.intervalChunk > 1)
+        assert (current_chunk > 1)
         intervalsCutted = []
         framesSum = 0
         framesLostSum = 0
@@ -289,11 +302,11 @@ class exportClass():
             count = init if self.asc else end
 
             # calculate how many chunks will result per interval
-            numOfChunks = math.floor(dist / self.intervalChunk)
+            numOfChunks = math.floor(dist / current_chunk)
             # If the division of interval is not possible and cannot be ignored
             if numOfChunks <= 0 and self.ignoreSmall:
                 print("WARNING: the interval chunk length chosen is too small, some intervals are too small to be cutted by",
-                                   self.intervalChunk, "frames. To ignore small intervals, set True to ignoreSmall argument.")
+                                   current_chunk, "frames. To ignore small intervals, set True to ignoreSmall argument.")
                 print("WARNING: Skipped interval", interval, "for being too small :(")
             else:
                 # if the division of interval is possible
@@ -301,12 +314,12 @@ class exportClass():
                     for x in range(numOfChunks):
                         # if Ascendant, take the initial limit of interval and start dividing chunks from there adding chunk size
                         if self.asc:
-                            intervalsCutted.append([count, count + self.intervalChunk - 1])
-                            count = count + self.intervalChunk
+                            intervalsCutted.append([count, count + current_chunk - 1])
+                            count = count + current_chunk
                         # if descendant, take the final limit of interval and start dividing chunks from there substracting chunk size
                         else:
-                            intervalsCutted.append([count, count - self.intervalChunk + 1])
-                            count = count - self.intervalChunk
+                            intervalsCutted.append([count, count - current_chunk + 1])
+                            count = count - current_chunk
                     framesLost = abs(
                         count - end) if self.asc else abs(count - init)
                 if not self.ignoreSmall:
@@ -329,7 +342,7 @@ class exportClass():
     # saves video in @self.destinationPath
     # @capVideo: is video loaded in opencv, not path
     # @name of file with no extension
-    def frameIntervalToVideo(self, frameStart, frameEnd, capVideo, name):
+    def frameIntervalToVideo(self, frameStart, frameEnd, capVideo, name, skip_frames=10):
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
         if self.size =="original":
             width = int(capVideo.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -337,14 +350,27 @@ class exportClass():
         else:
             width = self.size[0]
             height = self.size[1]
-        intervalVideo = cv2.VideoWriter(name + ".avi", fourcc, 29.76, (width, height))
+        # 调整帧率 = 原帧率/跳帧数
+        output_fps = 29.76 / skip_frames
+        intervalVideo = cv2.VideoWriter(name + ".avi", fourcc, output_fps, (width, height))
+        
         success = True
         capVideo.set(cv2.CAP_PROP_POS_FRAMES, frameStart)
+        frame_count = 0
+        
         while success and capVideo.get(cv2.CAP_PROP_POS_FRAMES) <= frameEnd:
             success, image = capVideo.read()
-            if self.size != "original":
-                image = cv2.resize(image, self.size, interpolation=cv2.INTER_LANCZOS4)
-            intervalVideo.write(image)
+            if not success:
+                break
+            
+            # 只处理每skip_frames帧中的一帧
+            if frame_count % skip_frames == 0:
+                if self.size != "original":
+                    image = cv2.resize(image, self.size, interpolation=cv2.INTER_LANCZOS4)
+                intervalVideo.write(image)
+            
+            frame_count += 1
+            
         intervalVideo.release()
 
     # Function to create a sub video called @name.avi from @frameStart to @frameEnd of stream video @streamVideoPath from DEPTH channel.
